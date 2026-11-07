@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"fmt"
 	"math/rand"
 	"net/http"
 	"sync"
@@ -12,14 +12,6 @@ var (
 	urlStore = make(map[string]string)
 	mu       sync.RWMutex
 )
-
-type ShortenRequest struct {
-	URL string `json:"url"`
-}
-
-type ShortenResponse struct {
-	ShortURL string `json:"short_url"`
-}
 
 func generateID() string {
 	const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -32,34 +24,38 @@ func generateID() string {
 
 func shortenHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 
-	var req ShortenRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.URL == "" {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	longURL := r.FormValue("url")
+	if longURL == "" {
+		http.Error(w, "URL is empty", http.StatusBadRequest)
 		return
 	}
 
 	id := generateID()
 
 	mu.Lock()
-	urlStore[id] = req.URL
+	urlStore[id] = longURL
 	mu.Unlock()
 
-	shortURL := "http://localhost:8080/" + id
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ShortenResponse{ShortURL: shortURL})
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, "<h1>Готово!</h1><p>Твоя ссылка: <a href=\"/%s\">localhost:8080/%s</a></p><p><a href=\"/\">Сократить еще одну</a></p>", id, id)
 }
 
 func redirectHandler(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Path[1:]
-	if id == "" {
-		http.NotFound(w, r)
+	if r.URL.Path == "/" {
+		http.ServeFile(w, r, "index.html")
 		return
 	}
+
+	id := r.URL.Path[1:]
 
 	mu.RLock()
 	originalURL, exists := urlStore[id]
@@ -76,8 +72,13 @@ func redirectHandler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
+	http.HandleFunc("/styles.css", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "styles.css")
+	})
+
 	http.HandleFunc("/shorten", shortenHandler)
 	http.HandleFunc("/", redirectHandler)
 
+	fmt.Println("Сервер запущен на http://localhost:8080")
 	http.ListenAndServe(":8080", nil)
 }
